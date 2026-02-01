@@ -1,18 +1,50 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
+import { assetApi } from '@/api/assets'
 
-const stats = ref([
-  { name: '資產總數', value: '0', icon: 'assets', color: 'bg-blue-500' },
-  { name: '使用中', value: '0', icon: 'active', color: 'bg-green-500' },
-  { name: '閒置', value: '0', icon: 'idle', color: 'bg-yellow-500' },
-  { name: '待報廢', value: '0', icon: 'scrap', color: 'bg-red-500' },
-])
+const loading = ref(true)
+const statistics = ref(null)
+
+const stats = computed(() => {
+  if (!statistics.value) {
+    return [
+      { name: '資產總數', value: '0', color: 'bg-blue-500' },
+      { name: '使用中', value: '0', color: 'bg-green-500' },
+      { name: '閒置', value: '0', color: 'bg-yellow-500' },
+      { name: '維修中', value: '0', color: 'bg-orange-500' },
+    ]
+  }
+
+  const getCount = (status) => {
+    const item = statistics.value.byStatus.find(s => s.status === status)
+    return item ? item.count : 0
+  }
+
+  return [
+    { name: '資產總數', value: statistics.value.total.toLocaleString(), color: 'bg-blue-500' },
+    { name: '使用中', value: getCount('in_use').toLocaleString(), color: 'bg-green-500' },
+    { name: '閒置', value: getCount('idle').toLocaleString(), color: 'bg-yellow-500' },
+    { name: '維修中', value: getCount('repair').toLocaleString(), color: 'bg-orange-500' },
+  ]
+})
 
 const recentActivities = ref([])
 
-onMounted(() => {
-  // TODO: 載入統計資料
+onMounted(async () => {
+  await loadStatistics()
 })
+
+async function loadStatistics() {
+  loading.value = true
+  try {
+    const res = await assetApi.statistics()
+    statistics.value = res.data.data
+  } catch (error) {
+    console.error('載入統計失敗:', error)
+  } finally {
+    loading.value = false
+  }
+}
 </script>
 
 <template>
@@ -38,14 +70,37 @@ onMounted(() => {
         </div>
         <div class="ml-4">
           <p class="text-sm text-gray-500">{{ stat.name }}</p>
-          <p class="text-2xl font-semibold text-gray-900">{{ stat.value }}</p>
+          <p class="text-2xl font-semibold text-gray-900">{{ loading ? '...' : stat.value }}</p>
         </div>
       </div>
     </div>
 
-    <!-- Quick Actions & Recent Activities -->
+    <!-- Charts & Info -->
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <!-- Quick Actions -->
+      <!-- 分類統計 -->
+      <div class="card">
+        <h2 class="text-lg font-semibold text-gray-900 mb-4">依分類統計</h2>
+        <div v-if="loading" class="text-center py-8 text-gray-500">載入中...</div>
+        <div v-else-if="!statistics?.byCategory?.length" class="text-center py-8 text-gray-500">
+          尚無資料
+        </div>
+        <div v-else class="space-y-3">
+          <div v-for="cat in statistics.byCategory.slice(0, 5)" :key="cat.categoryId" class="flex items-center">
+            <span class="w-24 text-sm text-gray-600 truncate">{{ cat.categoryName }}</span>
+            <div class="flex-1 mx-3">
+              <div class="bg-gray-200 rounded-full h-2">
+                <div 
+                  class="bg-primary-600 h-2 rounded-full" 
+                  :style="{ width: `${(cat.count / statistics.total * 100)}%` }"
+                ></div>
+              </div>
+            </div>
+            <span class="text-sm font-medium text-gray-900 w-12 text-right">{{ cat.count }}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 快速操作 -->
       <div class="card">
         <h2 class="text-lg font-semibold text-gray-900 mb-4">快速操作</h2>
         <div class="grid grid-cols-2 gap-4">
@@ -87,26 +142,24 @@ onMounted(() => {
           </RouterLink>
         </div>
       </div>
+    </div>
 
-      <!-- Recent Activities -->
-      <div class="card">
-        <h2 class="text-lg font-semibold text-gray-900 mb-4">最近異動</h2>
-        <div v-if="recentActivities.length === 0" class="text-center py-8 text-gray-500">
-          <svg class="h-12 w-12 mx-auto text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-          </svg>
-          <p class="mt-2">暫無異動紀錄</p>
+    <!-- 部門統計 -->
+    <div class="card">
+      <h2 class="text-lg font-semibold text-gray-900 mb-4">依部門統計</h2>
+      <div v-if="loading" class="text-center py-8 text-gray-500">載入中...</div>
+      <div v-else-if="!statistics?.byDepartment?.length" class="text-center py-8 text-gray-500">
+        尚無資料
+      </div>
+      <div v-else class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+        <div 
+          v-for="dept in statistics.byDepartment" 
+          :key="dept.departmentId"
+          class="text-center p-4 bg-gray-50 rounded-lg"
+        >
+          <p class="text-2xl font-bold text-primary-600">{{ dept.count }}</p>
+          <p class="text-sm text-gray-600 truncate">{{ dept.departmentName }}</p>
         </div>
-        <ul v-else class="divide-y">
-          <li v-for="activity in recentActivities" :key="activity.id" class="py-3">
-            <div class="flex items-center space-x-3">
-              <div class="flex-1">
-                <p class="text-sm text-gray-900">{{ activity.description }}</p>
-                <p class="text-xs text-gray-500">{{ activity.time }}</p>
-              </div>
-            </div>
-          </li>
-        </ul>
       </div>
     </div>
   </div>
