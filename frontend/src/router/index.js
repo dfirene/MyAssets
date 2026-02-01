@@ -34,6 +34,11 @@ const routes = [
         component: () => import('@/views/inventory/InventoryListView.vue'),
       },
       {
+        path: 'inventory/:id',
+        name: 'InventoryExecute',
+        component: () => import('@/views/inventory/InventoryExecuteView.vue'),
+      },
+      {
         path: 'reports',
         name: 'Reports',
         component: () => import('@/views/reports/ReportsView.vue'),

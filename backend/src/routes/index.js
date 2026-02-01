@@ -7,6 +7,7 @@ const categoryRoutes = require('./categories');
 const locationRoutes = require('./locations');
 const supplierRoutes = require('./suppliers');
 const assetRoutes = require('./assets');
+const inventoryRoutes = require('./inventory');
 
 const router = express.Router();
 
@@ -34,6 +35,9 @@ router.use('/suppliers', supplierRoutes);
 // 資產管理
 router.use('/assets', assetRoutes);
 
+// 盤點管理
+router.use('/inventory', inventoryRoutes);
+
 // API 首頁
 router.get('/', (req, res) => {
   res.json({
@@ -50,7 +54,7 @@ router.get('/', (req, res) => {
         locations: '/api/v1/locations',
         suppliers: '/api/v1/suppliers',
         assets: '/api/v1/assets',
-        inventory: '/api/v1/inventory (coming soon)',
+        inventory: '/api/v1/inventory',
         reports: '/api/v1/reports (coming soon)',
       },
     },
