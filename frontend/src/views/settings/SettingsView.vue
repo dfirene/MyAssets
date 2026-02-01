@@ -1,17 +1,29 @@
 <script setup>
-import { ref } from 'vue'
-
-const activeTab = ref('users')
+import { ref, shallowRef, markRaw } from 'vue'
+import UsersTab from './tabs/UsersTab.vue'
+import DepartmentsTab from './tabs/DepartmentsTab.vue'
+import CategoriesTab from './tabs/CategoriesTab.vue'
+import LocationsTab from './tabs/LocationsTab.vue'
+import SuppliersTab from './tabs/SuppliersTab.vue'
 
 const tabs = [
-  { id: 'users', name: '使用者管理' },
-  { id: 'roles', name: '角色權限' },
-  { id: 'departments', name: '部門管理' },
-  { id: 'categories', name: '資產分類' },
-  { id: 'locations', name: '存放位置' },
-  { id: 'suppliers', name: '供應商' },
-  { id: 'statuses', name: '狀態代碼' },
+  { id: 'users', name: '使用者管理', component: markRaw(UsersTab) },
+  { id: 'departments', name: '部門管理', component: markRaw(DepartmentsTab) },
+  { id: 'categories', name: '資產分類', component: markRaw(CategoriesTab) },
+  { id: 'locations', name: '存放位置', component: markRaw(LocationsTab) },
+  { id: 'suppliers', name: '供應商', component: markRaw(SuppliersTab) },
 ]
+
+const activeTab = ref('users')
+const currentComponent = shallowRef(tabs[0].component)
+
+function switchTab(tabId) {
+  activeTab.value = tabId
+  const tab = tabs.find(t => t.id === tabId)
+  if (tab) {
+    currentComponent.value = tab.component
+  }
+}
 </script>
 
 <template>
@@ -28,9 +40,9 @@ const tabs = [
         <button
           v-for="tab in tabs"
           :key="tab.id"
-          @click="activeTab = tab.id"
+          @click="switchTab(tab.id)"
           :class="[
-            'py-4 px-1 border-b-2 font-medium text-sm transition-colors',
+            'py-4 px-1 border-b-2 font-medium text-sm transition-colors whitespace-nowrap',
             activeTab === tab.id
               ? 'border-primary-600 text-primary-600'
               : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300',
@@ -43,14 +55,7 @@ const tabs = [
 
     <!-- Tab Content -->
     <div class="card">
-      <div class="text-center py-12 text-gray-500">
-        <svg class="h-12 w-12 mx-auto text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
-            d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-        </svg>
-        <p class="mt-2">{{ tabs.find(t => t.id === activeTab)?.name }} - 功能開發中</p>
-      </div>
+      <component :is="currentComponent" />
     </div>
   </div>
 </template>
