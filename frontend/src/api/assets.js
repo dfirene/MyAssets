@@ -50,6 +50,30 @@ export const assetApi = {
   batchTransfer(data) {
     return api.post('/assets/batch-transfer', data)
   },
+
+  // 匯出 Excel
+  exportExcel(params = {}) {
+    return api.get('/assets/export', {
+      params,
+      responseType: 'blob',
+    })
+  },
+
+  // 下載匯入範本
+  downloadTemplate() {
+    return api.get('/assets/import-template', {
+      responseType: 'blob',
+    })
+  },
+
+  // 匯入 Excel
+  importExcel(file) {
+    const formData = new FormData()
+    formData.append('file', file)
+    return api.post('/assets/import', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
 }
 
 export default assetApi

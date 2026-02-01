@@ -255,6 +255,95 @@ async function deleteAsset(asset) {
     alert(error.response?.data?.error?.message || '刪除失敗')
   }
 }
+
+// Excel 匯入匯出
+const showImportModal = ref(false)
+const importFile = ref(null)
+const importing = ref(false)
+const importResult = ref(null)
+
+async function exportExcel() {
+  try {
+    const res = await assetApi.exportExcel({
+      categoryId: filters.value.categoryId,
+      departmentId: filters.value.departmentId,
+      status: filters.value.status,
+      keyword: filters.value.search,
+    })
+    
+    // 下載檔案
+    const blob = new Blob([res.data], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `assets_${new Date().toISOString().slice(0, 10)}.xlsx`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(url)
+  } catch (error) {
+    alert('匯出失敗：' + (error.response?.data?.error?.message || error.message))
+  }
+}
+
+async function downloadTemplate() {
+  try {
+    const res = await assetApi.downloadTemplate()
+    
+    const blob = new Blob([res.data], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = 'asset_import_template.xlsx'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(url)
+  } catch (error) {
+    alert('下載範本失敗：' + (error.response?.data?.error?.message || error.message))
+  }
+}
+
+function openImportModal() {
+  importFile.value = null
+  importResult.value = null
+  showImportModal.value = true
+}
+
+function onFileChange(e) {
+  importFile.value = e.target.files[0]
+}
+
+async function importExcel() {
+  if (!importFile.value) {
+    alert('請選擇檔案')
+    return
+  }
+  
+  importing.value = true
+  try {
+    const res = await assetApi.importExcel(importFile.value)
+    importResult.value = res.data.data
+    
+    if (importResult.value.success > 0) {
+      await loadAssets()
+    }
+  } catch (error) {
+    alert('匯入失敗：' + (error.response?.data?.error?.message || error.message))
+  } finally {
+    importing.value = false
+  }
+}
+
+function closeImportModal() {
+  showImportModal.value = false
+  importFile.value = null
+  importResult.value = null
+}
 </script>
 
 <template>
@@ -265,12 +354,26 @@ async function deleteAsset(asset) {
         <h1 class="text-2xl font-bold text-gray-900">資產管理</h1>
         <p class="text-gray-600">管理所有資訊資產</p>
       </div>
-      <button @click="openCreate" class="btn btn-primary">
-        <svg class="h-5 w-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-        </svg>
-        新增資產
-      </button>
+      <div class="flex gap-2">
+        <button @click="exportExcel" class="btn btn-secondary">
+          <svg class="h-5 w-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+          </svg>
+          匯出
+        </button>
+        <button @click="openImportModal" class="btn btn-secondary">
+          <svg class="h-5 w-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+          </svg>
+          匯入
+        </button>
+        <button @click="openCreate" class="btn btn-primary">
+          <svg class="h-5 w-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+          </svg>
+          新增資產
+        </button>
+      </div>
     </div>
 
     <!-- Filters -->
@@ -485,6 +588,78 @@ async function deleteAsset(asset) {
         <button @click="showMovementModal = false" class="btn btn-secondary">取消</button>
         <button @click="saveMovement" :disabled="saving" class="btn btn-primary">
           {{ saving ? '處理中...' : '確認異動' }}
+        </button>
+      </template>
+    </Modal>
+
+    <!-- Import Modal -->
+    <Modal :show="showImportModal" title="匯入資產" @close="closeImportModal">
+      <div class="space-y-4">
+        <div class="bg-blue-50 border border-blue-200 rounded p-4">
+          <h4 class="font-medium text-blue-800 mb-2">匯入說明</h4>
+          <ul class="text-sm text-blue-700 space-y-1">
+            <li>• 請先下載匯入範本，依照範本格式填寫</li>
+            <li>• 分類、部門、位置、供應商需填寫「代碼」</li>
+            <li>• 日期格式：YYYY-MM-DD</li>
+          </ul>
+          <button @click="downloadTemplate" class="mt-3 text-sm text-blue-600 hover:text-blue-800 underline">
+            📥 下載匯入範本
+          </button>
+        </div>
+
+        <div v-if="!importResult">
+          <label class="label">選擇 Excel 檔案</label>
+          <input
+            type="file"
+            accept=".xlsx,.xls"
+            @change="onFileChange"
+            class="block w-full text-sm text-gray-500
+              file:mr-4 file:py-2 file:px-4
+              file:rounded file:border-0
+              file:text-sm file:font-semibold
+              file:bg-primary-50 file:text-primary-700
+              hover:file:bg-primary-100"
+          />
+        </div>
+
+        <div v-if="importResult" class="bg-gray-50 rounded p-4">
+          <h4 class="font-medium mb-2">匯入結果</h4>
+          <div class="grid grid-cols-3 gap-4 text-center mb-4">
+            <div>
+              <p class="text-2xl font-bold text-gray-900">{{ importResult.total }}</p>
+              <p class="text-sm text-gray-500">總筆數</p>
+            </div>
+            <div>
+              <p class="text-2xl font-bold text-green-600">{{ importResult.success }}</p>
+              <p class="text-sm text-gray-500">成功</p>
+            </div>
+            <div>
+              <p class="text-2xl font-bold text-red-600">{{ importResult.failed }}</p>
+              <p class="text-sm text-gray-500">失敗</p>
+            </div>
+          </div>
+          
+          <div v-if="importResult.errors?.length > 0" class="mt-4">
+            <h5 class="font-medium text-red-700 mb-2">錯誤明細：</h5>
+            <div class="max-h-40 overflow-y-auto text-sm">
+              <div v-for="err in importResult.errors" :key="err.row" class="text-red-600">
+                第 {{ err.row }} 行：{{ err.message }}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <button @click="closeImportModal" class="btn btn-secondary">
+          {{ importResult ? '關閉' : '取消' }}
+        </button>
+        <button
+          v-if="!importResult"
+          @click="importExcel"
+          :disabled="importing || !importFile"
+          class="btn btn-primary"
+        >
+          {{ importing ? '匯入中...' : '開始匯入' }}
         </button>
       </template>
     </Modal>

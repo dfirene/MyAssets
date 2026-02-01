@@ -1,6 +1,7 @@
 const { validationResult } = require('express-validator');
 const assetService = require('../services/assetService');
 const movementService = require('../services/movementService');
+const excelService = require('../services/excelService');
 const { success, paginated, errors } = require('../utils/response');
 
 /**
@@ -218,6 +219,70 @@ const assetController = {
         summary: { total: assetIds.length, success: successCount, failed: failCount },
       }, `批次調撥完成：成功 ${successCount} 筆，失敗 ${failCount} 筆`);
     } catch (error) {
+      next(error);
+    }
+  },
+
+  /**
+   * 匯出資產 Excel
+   * GET /api/v1/assets/export
+   */
+  async exportExcel(req, res, next) {
+    try {
+      const { categoryId, departmentId, locationId, status, keyword } = req.query;
+      
+      const buffer = await excelService.exportAssets({
+        categoryId,
+        departmentId,
+        locationId,
+        status,
+        keyword,
+      });
+
+      const filename = `assets_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.send(buffer);
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  /**
+   * 下載匯入範本
+   * GET /api/v1/assets/import-template
+   */
+  async importTemplate(req, res, next) {
+    try {
+      const buffer = excelService.getImportTemplate();
+      
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', 'attachment; filename="asset_import_template.xlsx"');
+      res.send(buffer);
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  /**
+   * 匯入資產
+   * POST /api/v1/assets/import
+   */
+  async importExcel(req, res, next) {
+    try {
+      if (!req.file) {
+        return errors.badRequest(res, '請上傳 Excel 檔案');
+      }
+
+      const result = await excelService.importAssets(req.file.buffer, req.user.id);
+      
+      const message = `匯入完成：成功 ${result.success} 筆，失敗 ${result.failed} 筆`;
+      return success(res, result, message);
+    } catch (error) {
+      if (error.message.includes('沒有資料')) {
+        return errors.badRequest(res, error.message);
+      }
       next(error);
     }
   },
