@@ -3,438 +3,667 @@ const prisma = require('../models/prisma');
 /**
  * 盤點服務
  */
-class InventoryService {
-  /**
-   * 查詢盤點計畫列表
-   */
-  async findAllPlans({ page = 1, pageSize = 20, status } = {}) {
-    const where = {};
-    if (status) {
-      where.status = status;
-    }
 
-    const [total, plans] = await Promise.all([
-      prisma.inventoryPlan.count({ where }),
-      prisma.inventoryPlan.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-      }),
-    ]);
+/**
+ * 轉換 BigInt 為字串（JSON 序列化用）
+ */
+function serializeBigInt(obj) {
+  return JSON.parse(JSON.stringify(obj, (key, value) =>
+    typeof value === 'bigint' ? value.toString() : value
+  ));
+}
 
-    // 計算每個計畫的進度
-    const plansWithProgress = await Promise.all(
-      plans.map(async (plan) => {
-        const progress = await this.getPlanProgress(plan.id);
-        return {
-          ...this.formatPlan(plan),
-          progress,
-        };
-      })
-    );
-
-    return {
-      data: plansWithProgress,
-      pagination: { page, pageSize, total },
-    };
+/**
+ * 查詢盤點計畫列表
+ */
+async function findAllPlans({ page = 1, pageSize = 20, status, search }) {
+  const where = {};
+  
+  if (status) {
+    where.status = status;
+  }
+  
+  if (search) {
+    where.OR = [
+      { name: { contains: search, mode: 'insensitive' } },
+      { description: { contains: search, mode: 'insensitive' } },
+    ];
   }
 
-  /**
-   * 查詢單一盤點計畫
-   */
-  async findPlanById(id) {
-    const plan = await prisma.inventoryPlan.findUnique({
-      where: { id: BigInt(id) },
-    });
+  const [total, data] = await Promise.all([
+    prisma.inventoryPlan.count({ where }),
+    prisma.inventoryPlan.findMany({
+      where,
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+      orderBy: { createdAt: 'desc' },
+    }),
+  ]);
 
-    if (!plan) {
-      throw new Error('盤點計畫不存在');
-    }
+  // 為每個計畫取得統計
+  const plansWithStats = await Promise.all(
+    data.map(async (plan) => {
+      const stats = await prisma.inventoryRecord.groupBy({
+        by: ['matchStatus'],
+        where: { planId: plan.id },
+        _count: true,
+      });
 
-    const progress = await this.getPlanProgress(plan.id);
-    return {
-      ...this.formatPlan(plan),
-      progress,
-    };
+      const statsMap = stats.reduce((acc, s) => {
+        acc[s.matchStatus] = s._count;
+        return acc;
+      }, {});
+
+      return {
+        ...plan,
+        stats: {
+          total: Object.values(statsMap).reduce((a, b) => a + b, 0),
+          matched: statsMap.matched || 0,
+          unmatched: statsMap.unmatched || 0,
+          discrepancy: statsMap.discrepancy || 0,
+        },
+      };
+    })
+  );
+
+  return {
+    data: serializeBigInt(plansWithStats),
+    pagination: {
+      page,
+      pageSize,
+      total,
+      totalPages: Math.ceil(total / pageSize),
+    },
+  };
+}
+
+/**
+ * 查詢單一盤點計畫
+ */
+async function findPlanById(id) {
+  const plan = await prisma.inventoryPlan.findUnique({
+    where: { id: BigInt(id) },
+  });
+
+  if (!plan) {
+    throw new Error('盤點計畫不存在');
   }
 
-  /**
-   * 建立盤點計畫
-   */
-  async createPlan(data, userId) {
-    const plan = await prisma.inventoryPlan.create({
+  // 取得統計
+  const stats = await prisma.inventoryRecord.groupBy({
+    by: ['matchStatus'],
+    where: { planId: plan.id },
+    _count: true,
+  });
+
+  const statsMap = stats.reduce((acc, s) => {
+    acc[s.matchStatus] = s._count;
+    return acc;
+  }, {});
+
+  // 取得範圍內的資產數量
+  const scopeWhere = buildScopeWhere(plan);
+  const totalAssets = await prisma.asset.count({
+    where: { ...scopeWhere, status: { not: 'scrapped' } },
+  });
+
+  return serializeBigInt({
+    ...plan,
+    scopeIds: plan.scopeIds ? JSON.parse(plan.scopeIds) : [],
+    stats: {
+      totalAssets,
+      scanned: Object.values(statsMap).reduce((a, b) => a + b, 0),
+      matched: statsMap.matched || 0,
+      unmatched: statsMap.unmatched || 0,
+      discrepancy: statsMap.discrepancy || 0,
+    },
+  });
+}
+
+/**
+ * 建立盤點計畫
+ */
+async function createPlan(data, userId) {
+  const plan = await prisma.inventoryPlan.create({
+    data: {
+      name: data.name,
+      description: data.description || null,
+      startDate: new Date(data.startDate),
+      endDate: new Date(data.endDate),
+      status: 'draft',
+      scopeType: data.scopeType || 'all',
+      scopeIds: data.scopeIds ? JSON.stringify(data.scopeIds) : null,
+      createdBy: BigInt(userId),
+    },
+  });
+
+  return serializeBigInt(plan);
+}
+
+/**
+ * 更新盤點計畫
+ */
+async function updatePlan(id, data, userId) {
+  const existing = await prisma.inventoryPlan.findUnique({
+    where: { id: BigInt(id) },
+  });
+
+  if (!existing) {
+    throw new Error('盤點計畫不存在');
+  }
+
+  if (existing.status === 'completed' || existing.status === 'closed') {
+    throw new Error('已完成或關閉的盤點計畫無法修改');
+  }
+
+  const plan = await prisma.inventoryPlan.update({
+    where: { id: BigInt(id) },
+    data: {
+      name: data.name,
+      description: data.description || null,
+      startDate: data.startDate ? new Date(data.startDate) : undefined,
+      endDate: data.endDate ? new Date(data.endDate) : undefined,
+      scopeType: data.scopeType,
+      scopeIds: data.scopeIds ? JSON.stringify(data.scopeIds) : null,
+    },
+  });
+
+  return serializeBigInt(plan);
+}
+
+/**
+ * 開始盤點
+ */
+async function startPlan(id) {
+  const plan = await prisma.inventoryPlan.findUnique({
+    where: { id: BigInt(id) },
+  });
+
+  if (!plan) {
+    throw new Error('盤點計畫不存在');
+  }
+
+  if (plan.status !== 'draft') {
+    throw new Error('只有草稿狀態的計畫可以開始');
+  }
+
+  const updated = await prisma.inventoryPlan.update({
+    where: { id: BigInt(id) },
+    data: { status: 'in_progress' },
+  });
+
+  return serializeBigInt(updated);
+}
+
+/**
+ * 完成盤點
+ */
+async function completePlan(id) {
+  const plan = await prisma.inventoryPlan.findUnique({
+    where: { id: BigInt(id) },
+  });
+
+  if (!plan) {
+    throw new Error('盤點計畫不存在');
+  }
+
+  if (plan.status !== 'in_progress') {
+    throw new Error('只有進行中的計畫可以完成');
+  }
+
+  const updated = await prisma.inventoryPlan.update({
+    where: { id: BigInt(id) },
+    data: { status: 'completed' },
+  });
+
+  return serializeBigInt(updated);
+}
+
+/**
+ * 關閉盤點（結案）
+ */
+async function closePlan(id) {
+  const plan = await prisma.inventoryPlan.findUnique({
+    where: { id: BigInt(id) },
+  });
+
+  if (!plan) {
+    throw new Error('盤點計畫不存在');
+  }
+
+  if (plan.status !== 'completed') {
+    throw new Error('只有已完成的計畫可以關閉');
+  }
+
+  const updated = await prisma.inventoryPlan.update({
+    where: { id: BigInt(id) },
+    data: { status: 'closed' },
+  });
+
+  return serializeBigInt(updated);
+}
+
+/**
+ * 刪除盤點計畫
+ */
+async function deletePlan(id) {
+  const plan = await prisma.inventoryPlan.findUnique({
+    where: { id: BigInt(id) },
+  });
+
+  if (!plan) {
+    throw new Error('盤點計畫不存在');
+  }
+
+  if (plan.status !== 'draft') {
+    throw new Error('只有草稿狀態的計畫可以刪除');
+  }
+
+  await prisma.inventoryPlan.delete({
+    where: { id: BigInt(id) },
+  });
+}
+
+/**
+ * 建立盤點範圍查詢條件
+ */
+function buildScopeWhere(plan) {
+  const where = {};
+  
+  if (plan.scopeType === 'all') {
+    return where;
+  }
+
+  const scopeIds = plan.scopeIds ? JSON.parse(plan.scopeIds) : [];
+  if (scopeIds.length === 0) {
+    return where;
+  }
+
+  const bigIntIds = scopeIds.map(id => BigInt(id));
+
+  switch (plan.scopeType) {
+    case 'department':
+      where.departmentId = { in: bigIntIds };
+      break;
+    case 'location':
+      where.locationId = { in: bigIntIds };
+      break;
+    case 'category':
+      where.categoryId = { in: bigIntIds };
+      break;
+  }
+
+  return where;
+}
+
+/**
+ * 查詢盤點計畫的資產清單（待盤點）
+ */
+async function getPlanAssets(planId, { page = 1, pageSize = 50, status }) {
+  const plan = await prisma.inventoryPlan.findUnique({
+    where: { id: BigInt(planId) },
+  });
+
+  if (!plan) {
+    throw new Error('盤點計畫不存在');
+  }
+
+  const scopeWhere = buildScopeWhere(plan);
+  const where = { ...scopeWhere, status: { not: 'scrapped' } };
+
+  // 取得已盤點的資產編號
+  const scannedRecords = await prisma.inventoryRecord.findMany({
+    where: { planId: plan.id },
+    select: { assetNo: true },
+  });
+  const scannedAssetNos = new Set(scannedRecords.map(r => r.assetNo));
+
+  const [total, assets] = await Promise.all([
+    prisma.asset.count({ where }),
+    prisma.asset.findMany({
+      where,
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+      include: {
+        category: { select: { name: true } },
+        department: { select: { name: true } },
+        location: { select: { name: true } },
+        custodian: { select: { name: true } },
+      },
+      orderBy: { assetNo: 'asc' },
+    }),
+  ]);
+
+  // 標記是否已盤點
+  const assetsWithStatus = assets.map(asset => ({
+    ...asset,
+    isScanned: scannedAssetNos.has(asset.assetNo),
+  }));
+
+  // 若指定過濾狀態
+  let filteredAssets = assetsWithStatus;
+  if (status === 'scanned') {
+    filteredAssets = assetsWithStatus.filter(a => a.isScanned);
+  } else if (status === 'pending') {
+    filteredAssets = assetsWithStatus.filter(a => !a.isScanned);
+  }
+
+  return {
+    data: serializeBigInt(filteredAssets),
+    pagination: {
+      page,
+      pageSize,
+      total,
+      totalPages: Math.ceil(total / pageSize),
+    },
+    summary: {
+      total,
+      scanned: scannedAssetNos.size,
+      pending: total - scannedAssetNos.size,
+    },
+  };
+}
+
+/**
+ * 掃描資產（盤點）
+ */
+async function scanAsset(planId, data, userId) {
+  const plan = await prisma.inventoryPlan.findUnique({
+    where: { id: BigInt(planId) },
+  });
+
+  if (!plan) {
+    throw new Error('盤點計畫不存在');
+  }
+
+  if (plan.status !== 'in_progress') {
+    throw new Error('盤點計畫不在進行中');
+  }
+
+  // 查詢資產
+  const asset = await prisma.asset.findUnique({
+    where: { assetNo: data.assetNo },
+    include: {
+      category: { select: { name: true } },
+      department: { select: { name: true } },
+      location: { select: { name: true } },
+    },
+  });
+
+  // 判斷比對狀態
+  let matchStatus = 'unmatched';
+  let matchAssetId = null;
+  let discrepancyNote = null;
+
+  if (asset) {
+    matchAssetId = asset.id;
+    
+    // 檢查是否在盤點範圍內
+    const scopeWhere = buildScopeWhere(plan);
+    const inScope = await checkAssetInScope(asset, scopeWhere);
+    
+    if (inScope) {
+      // 檢查是否有差異（位置、部門等）
+      const discrepancies = [];
+      
+      if (data.locationId && asset.locationId && BigInt(data.locationId) !== asset.locationId) {
+        discrepancies.push('位置不符');
+      }
+      
+      if (data.departmentId && asset.departmentId && BigInt(data.departmentId) !== asset.departmentId) {
+        discrepancies.push('部門不符');
+      }
+
+      if (discrepancies.length > 0) {
+        matchStatus = 'discrepancy';
+        discrepancyNote = discrepancies.join('、');
+      } else {
+        matchStatus = 'matched';
+      }
+    } else {
+      matchStatus = 'discrepancy';
+      discrepancyNote = '資產不在盤點範圍內';
+    }
+  }
+
+  // 檢查是否已掃描
+  const existingRecord = await prisma.inventoryRecord.findFirst({
+    where: {
+      planId: plan.id,
+      assetNo: data.assetNo,
+    },
+  });
+
+  if (existingRecord) {
+    // 更新現有記錄
+    const record = await prisma.inventoryRecord.update({
+      where: { id: existingRecord.id },
       data: {
-        name: data.name,
-        description: data.description,
-        startDate: new Date(data.startDate),
-        endDate: new Date(data.endDate),
-        status: 'draft',
-        scopeType: data.scopeType || 'all',
-        scopeIds: data.scopeIds ? JSON.stringify(data.scopeIds) : null,
-        createdBy: BigInt(userId),
+        matchStatus,
+        matchAssetId,
+        discrepancyNote: data.discrepancyNote || discrepancyNote,
+        imagePath: data.imagePath || null,
+        gpsLatitude: data.latitude ? parseFloat(data.latitude) : null,
+        gpsLongitude: data.longitude ? parseFloat(data.longitude) : null,
+        scannedBy: BigInt(userId),
+        scannedAt: new Date(),
       },
     });
 
-    return this.formatPlan(plan);
-  }
-
-  /**
-   * 更新盤點計畫
-   */
-  async updatePlan(id, data) {
-    const planId = BigInt(id);
-
-    const existing = await prisma.inventoryPlan.findUnique({
-      where: { id: planId },
-    });
-
-    if (!existing) {
-      throw new Error('盤點計畫不存在');
-    }
-
-    if (existing.status === 'closed') {
-      throw new Error('已結案的計畫無法修改');
-    }
-
-    const updateData = {};
-    if (data.name !== undefined) updateData.name = data.name;
-    if (data.description !== undefined) updateData.description = data.description;
-    if (data.startDate !== undefined) updateData.startDate = new Date(data.startDate);
-    if (data.endDate !== undefined) updateData.endDate = new Date(data.endDate);
-    if (data.scopeType !== undefined) updateData.scopeType = data.scopeType;
-    if (data.scopeIds !== undefined) updateData.scopeIds = JSON.stringify(data.scopeIds);
-    if (data.status !== undefined) updateData.status = data.status;
-
-    const plan = await prisma.inventoryPlan.update({
-      where: { id: planId },
-      data: updateData,
-    });
-
-    return this.formatPlan(plan);
-  }
-
-  /**
-   * 刪除盤點計畫
-   */
-  async deletePlan(id) {
-    const planId = BigInt(id);
-
-    const plan = await prisma.inventoryPlan.findUnique({
-      where: { id: planId },
-    });
-
-    if (!plan) {
-      throw new Error('盤點計畫不存在');
-    }
-
-    if (plan.status !== 'draft') {
-      throw new Error('只有草稿狀態的計畫可以刪除');
-    }
-
-    await prisma.inventoryPlan.delete({
-      where: { id: planId },
+    return serializeBigInt({
+      ...record,
+      asset: asset ? serializeBigInt(asset) : null,
+      isUpdate: true,
     });
   }
 
-  /**
-   * 開始盤點
-   */
-  async startPlan(id) {
-    const planId = BigInt(id);
+  // 建立新記錄
+  const record = await prisma.inventoryRecord.create({
+    data: {
+      planId: plan.id,
+      assetNo: data.assetNo,
+      matchStatus,
+      matchAssetId,
+      discrepancyNote: data.discrepancyNote || discrepancyNote,
+      imagePath: data.imagePath || null,
+      gpsLatitude: data.latitude ? parseFloat(data.latitude) : null,
+      gpsLongitude: data.longitude ? parseFloat(data.longitude) : null,
+      scannedBy: BigInt(userId),
+      scannedAt: new Date(),
+    },
+  });
 
-    const plan = await prisma.inventoryPlan.findUnique({
-      where: { id: planId },
-    });
+  return serializeBigInt({
+    ...record,
+    asset: asset ? serializeBigInt(asset) : null,
+    isUpdate: false,
+  });
+}
 
-    if (!plan) {
-      throw new Error('盤點計畫不存在');
-    }
-
-    if (plan.status !== 'draft') {
-      throw new Error('只有草稿狀態的計畫可以開始');
-    }
-
-    const updated = await prisma.inventoryPlan.update({
-      where: { id: planId },
-      data: { status: 'in_progress' },
-    });
-
-    return this.formatPlan(updated);
+/**
+ * 檢查資產是否在範圍內
+ */
+async function checkAssetInScope(asset, scopeWhere) {
+  if (Object.keys(scopeWhere).length === 0) {
+    return true;
   }
 
-  /**
-   * 完成盤點
-   */
-  async completePlan(id) {
-    const planId = BigInt(id);
-
-    const plan = await prisma.inventoryPlan.findUnique({
-      where: { id: planId },
-    });
-
-    if (!plan) {
-      throw new Error('盤點計畫不存在');
-    }
-
-    if (plan.status !== 'in_progress') {
-      throw new Error('只有進行中的計畫可以完成');
-    }
-
-    const updated = await prisma.inventoryPlan.update({
-      where: { id: planId },
-      data: { status: 'completed' },
-    });
-
-    return this.formatPlan(updated);
+  if (scopeWhere.departmentId && !scopeWhere.departmentId.in.includes(asset.departmentId)) {
+    return false;
   }
 
-  /**
-   * 結案盤點
-   */
-  async closePlan(id) {
-    const planId = BigInt(id);
-
-    const plan = await prisma.inventoryPlan.findUnique({
-      where: { id: planId },
-    });
-
-    if (!plan) {
-      throw new Error('盤點計畫不存在');
-    }
-
-    if (plan.status !== 'completed') {
-      throw new Error('只有已完成的計畫可以結案');
-    }
-
-    const updated = await prisma.inventoryPlan.update({
-      where: { id: planId },
-      data: { status: 'closed' },
-    });
-
-    return this.formatPlan(updated);
+  if (scopeWhere.locationId && (!asset.locationId || !scopeWhere.locationId.in.includes(asset.locationId))) {
+    return false;
   }
 
-  /**
-   * 取得盤點進度
-   */
-  async getPlanProgress(planId) {
-    // 取得計畫範圍內的資產數量
-    const plan = await prisma.inventoryPlan.findUnique({
-      where: { id: BigInt(planId) },
-    });
-
-    if (!plan) return null;
-
-    let assetWhere = {};
-    if (plan.scopeType !== 'all' && plan.scopeIds) {
-      const scopeIds = JSON.parse(plan.scopeIds).map(id => BigInt(id));
-      switch (plan.scopeType) {
-        case 'department':
-          assetWhere.departmentId = { in: scopeIds };
-          break;
-        case 'location':
-          assetWhere.locationId = { in: scopeIds };
-          break;
-        case 'category':
-          assetWhere.categoryId = { in: scopeIds };
-          break;
-      }
-    }
-
-    // 只統計使用中的資產
-    assetWhere.status = { in: ['in_use', 'idle'] };
-
-    const [totalAssets, scannedRecords, matchedCount, unmatchedCount, discrepancyCount] = await Promise.all([
-      prisma.asset.count({ where: assetWhere }),
-      prisma.inventoryRecord.count({ where: { planId: BigInt(planId) } }),
-      prisma.inventoryRecord.count({ where: { planId: BigInt(planId), matchStatus: 'matched' } }),
-      prisma.inventoryRecord.count({ where: { planId: BigInt(planId), matchStatus: 'unmatched' } }),
-      prisma.inventoryRecord.count({ where: { planId: BigInt(planId), matchStatus: 'discrepancy' } }),
-    ]);
-
-    return {
-      totalAssets,
-      scannedCount: scannedRecords,
-      matchedCount,
-      unmatchedCount,
-      discrepancyCount,
-      percentage: totalAssets > 0 ? Math.round((matchedCount / totalAssets) * 100) : 0,
-    };
+  if (scopeWhere.categoryId && !scopeWhere.categoryId.in.includes(asset.categoryId)) {
+    return false;
   }
 
-  /**
-   * 取得待盤資產清單
-   */
-  async getPendingAssets(planId, { page = 1, pageSize = 50 } = {}) {
-    const plan = await prisma.inventoryPlan.findUnique({
-      where: { id: BigInt(planId) },
-    });
+  return true;
+}
 
-    if (!plan) {
-      throw new Error('盤點計畫不存在');
-    }
+/**
+ * 查詢盤點記錄
+ */
+async function findRecords(planId, { page = 1, pageSize = 50, matchStatus, search }) {
+  const where = { planId: BigInt(planId) };
 
-    // 已盤點的資產編號
-    const scannedRecords = await prisma.inventoryRecord.findMany({
-      where: { planId: BigInt(planId), matchStatus: 'matched' },
-      select: { matchAssetId: true },
-    });
-    const scannedAssetIds = scannedRecords
-      .filter(r => r.matchAssetId)
-      .map(r => r.matchAssetId);
-
-    // 建立資產查詢條件
-    let assetWhere = {
-      status: { in: ['in_use', 'idle'] },
-    };
-
-    if (scannedAssetIds.length > 0) {
-      assetWhere.id = { notIn: scannedAssetIds };
-    }
-
-    if (plan.scopeType !== 'all' && plan.scopeIds) {
-      const scopeIds = JSON.parse(plan.scopeIds).map(id => BigInt(id));
-      switch (plan.scopeType) {
-        case 'department':
-          assetWhere.departmentId = { in: scopeIds };
-          break;
-        case 'location':
-          assetWhere.locationId = { in: scopeIds };
-          break;
-        case 'category':
-          assetWhere.categoryId = { in: scopeIds };
-          break;
-      }
-    }
-
-    const [total, assets] = await Promise.all([
-      prisma.asset.count({ where: assetWhere }),
-      prisma.asset.findMany({
-        where: assetWhere,
-        include: {
-          category: true,
-          department: true,
-          location: true,
-          custodian: { select: { id: true, name: true } },
-        },
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-        orderBy: { assetNo: 'asc' },
-      }),
-    ]);
-
-    return {
-      data: assets.map(a => ({
-        id: a.id.toString(),
-        assetNo: a.assetNo,
-        name: a.name,
-        category: a.category?.name,
-        department: a.department?.name,
-        location: a.location?.name,
-        custodian: a.custodian?.name,
-      })),
-      pagination: { page, pageSize, total },
-    };
+  if (matchStatus) {
+    where.matchStatus = matchStatus;
   }
 
-  /**
-   * 取得盤點紀錄
-   */
-  async getRecords(planId, { page = 1, pageSize = 50, matchStatus } = {}) {
-    const where = { planId: BigInt(planId) };
-    if (matchStatus) {
-      where.matchStatus = matchStatus;
-    }
+  if (search) {
+    where.assetNo = { contains: search, mode: 'insensitive' };
+  }
 
-    const [total, records] = await Promise.all([
-      prisma.inventoryRecord.count({ where }),
-      prisma.inventoryRecord.findMany({
-        where,
-        include: {
-          asset: {
-            select: { id: true, assetNo: true, name: true },
-          },
-          scannedByUser: {
-            select: { id: true, name: true },
+  const [total, records] = await Promise.all([
+    prisma.inventoryRecord.count({ where }),
+    prisma.inventoryRecord.findMany({
+      where,
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+      include: {
+        asset: {
+          include: {
+            category: { select: { name: true } },
+            department: { select: { name: true } },
+            location: { select: { name: true } },
           },
         },
-        orderBy: { scannedAt: 'desc' },
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-      }),
-    ]);
+        scannedByUser: { select: { name: true } },
+      },
+      orderBy: { scannedAt: 'desc' },
+    }),
+  ]);
 
-    return {
-      data: records.map(this.formatRecord),
-      pagination: { page, pageSize, total },
-    };
+  return {
+    data: serializeBigInt(records),
+    pagination: {
+      page,
+      pageSize,
+      total,
+      totalPages: Math.ceil(total / pageSize),
+    },
+  };
+}
+
+/**
+ * 取得盤點差異報表
+ */
+async function getDiscrepancyReport(planId) {
+  const plan = await prisma.inventoryPlan.findUnique({
+    where: { id: BigInt(planId) },
+  });
+
+  if (!plan) {
+    throw new Error('盤點計畫不存在');
   }
 
-  /**
-   * 格式化盤點計畫
-   */
-  formatPlan(plan) {
-    const statusNames = {
-      draft: '草稿',
-      in_progress: '進行中',
-      completed: '已完成',
-      closed: '已結案',
-    };
+  // 取得所有差異和未比對記錄
+  const discrepancies = await prisma.inventoryRecord.findMany({
+    where: {
+      planId: plan.id,
+      matchStatus: { in: ['discrepancy', 'unmatched'] },
+    },
+    include: {
+      asset: {
+        include: {
+          category: { select: { name: true } },
+          department: { select: { name: true } },
+          location: { select: { name: true } },
+          custodian: { select: { name: true } },
+        },
+      },
+      scannedByUser: { select: { name: true } },
+    },
+    orderBy: { assetNo: 'asc' },
+  });
 
-    return {
-      id: plan.id.toString(),
+  // 取得未盤點的資產
+  const scopeWhere = buildScopeWhere(plan);
+  const scannedAssetNos = await prisma.inventoryRecord.findMany({
+    where: { planId: plan.id },
+    select: { assetNo: true },
+  });
+  const scannedSet = new Set(scannedAssetNos.map(r => r.assetNo));
+
+  const notScanned = await prisma.asset.findMany({
+    where: {
+      ...scopeWhere,
+      status: { not: 'scrapped' },
+      assetNo: { notIn: Array.from(scannedSet) },
+    },
+    include: {
+      category: { select: { name: true } },
+      department: { select: { name: true } },
+      location: { select: { name: true } },
+      custodian: { select: { name: true } },
+    },
+    orderBy: { assetNo: 'asc' },
+  });
+
+  return serializeBigInt({
+    plan: {
+      id: plan.id,
       name: plan.name,
-      description: plan.description,
       startDate: plan.startDate,
       endDate: plan.endDate,
       status: plan.status,
-      statusName: statusNames[plan.status] || plan.status,
-      scopeType: plan.scopeType,
-      scopeIds: plan.scopeIds ? JSON.parse(plan.scopeIds) : [],
-      createdBy: plan.createdBy?.toString(),
-      createdAt: plan.createdAt,
-      updatedAt: plan.updatedAt,
-    };
-  }
-
-  /**
-   * 格式化盤點紀錄
-   */
-  formatRecord(record) {
-    const statusNames = {
-      matched: '已匹配',
-      unmatched: '盤盈',
-      discrepancy: '差異',
-    };
-
-    return {
-      id: record.id.toString(),
-      planId: record.planId.toString(),
-      assetNo: record.assetNo,
-      ocrRawText: record.ocrRawText,
-      ocrCategory: record.ocrCategory,
-      ocrName: record.ocrName,
-      ocrDate: record.ocrDate,
-      imagePath: record.imagePath,
-      matchStatus: record.matchStatus,
-      matchStatusName: statusNames[record.matchStatus] || record.matchStatus,
-      matchAsset: record.asset ? {
-        id: record.asset.id.toString(),
-        assetNo: record.asset.assetNo,
-        name: record.asset.name,
-      } : null,
-      discrepancyNote: record.discrepancyNote,
-      scannedBy: record.scannedByUser ? {
-        id: record.scannedByUser.id.toString(),
-        name: record.scannedByUser.name,
-      } : null,
-      scannedAt: record.scannedAt,
-      gpsLatitude: record.gpsLatitude ? parseFloat(record.gpsLatitude) : null,
-      gpsLongitude: record.gpsLongitude ? parseFloat(record.gpsLongitude) : null,
-      createdAt: record.createdAt,
-    };
-  }
+    },
+    discrepancies: discrepancies.map(r => ({
+      ...r,
+      type: r.matchStatus === 'unmatched' ? '系統無此資產' : '資料差異',
+    })),
+    notScanned,
+    summary: {
+      discrepancyCount: discrepancies.filter(r => r.matchStatus === 'discrepancy').length,
+      unmatchedCount: discrepancies.filter(r => r.matchStatus === 'unmatched').length,
+      notScannedCount: notScanned.length,
+    },
+  });
 }
 
-module.exports = new InventoryService();
+/**
+ * 更新盤點記錄（處理差異）
+ */
+async function updateRecord(recordId, data, userId) {
+  const record = await prisma.inventoryRecord.findUnique({
+    where: { id: BigInt(recordId) },
+    include: { plan: true },
+  });
+
+  if (!record) {
+    throw new Error('盤點記錄不存在');
+  }
+
+  if (record.plan.status === 'closed') {
+    throw new Error('盤點計畫已關閉，無法修改');
+  }
+
+  const updated = await prisma.inventoryRecord.update({
+    where: { id: BigInt(recordId) },
+    data: {
+      matchStatus: data.matchStatus || record.matchStatus,
+      discrepancyNote: data.discrepancyNote,
+    },
+  });
+
+  return serializeBigInt(updated);
+}
+
+module.exports = {
+  findAllPlans,
+  findPlanById,
+  createPlan,
+  updatePlan,
+  startPlan,
+  completePlan,
+  closePlan,
+  deletePlan,
+  getPlanAssets,
+  scanAsset,
+  findRecords,
+  getDiscrepancyReport,
+  updateRecord,
+};

@@ -60,8 +60,8 @@ async function loadPlans() {
     plans.value = res.data.data.map(p => ({
       ...p,
       period: `${formatDate(p.startDate)} ~ ${formatDate(p.endDate)}`,
-      progressText: p.progress 
-        ? `${p.progress.matchedCount}/${p.progress.totalAssets} (${p.progress.percentage}%)`
+      progressText: p.stats 
+        ? `${p.stats.matched}/${p.stats.total}`
         : '-',
     }))
     pagination.value = res.data.pagination

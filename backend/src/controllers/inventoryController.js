@@ -1,6 +1,5 @@
 const { validationResult } = require('express-validator');
 const inventoryService = require('../services/inventoryService');
-const ocrService = require('../services/ocrService');
 const { success, paginated, errors } = require('../utils/response');
 
 /**
@@ -13,12 +12,13 @@ const inventoryController = {
    */
   async listPlans(req, res, next) {
     try {
-      const { page = 1, pageSize = 20, status } = req.query;
+      const { page = 1, pageSize = 20, status, search } = req.query;
 
       const result = await inventoryService.findAllPlans({
         page: parseInt(page),
         pageSize: parseInt(pageSize),
         status,
+        search,
       });
 
       return paginated(res, result.data, result.pagination);
@@ -67,13 +67,13 @@ const inventoryController = {
    */
   async updatePlan(req, res, next) {
     try {
-      const plan = await inventoryService.updatePlan(req.params.id, req.body);
+      const plan = await inventoryService.updatePlan(req.params.id, req.body, req.user.id);
       return success(res, plan, '盤點計畫更新成功');
     } catch (error) {
       if (error.message.includes('不存在')) {
         return errors.notFound(res, error.message);
       }
-      if (error.message.includes('無法')) {
+      if (error.message.includes('無法修改')) {
         return errors.badRequest(res, error.message);
       }
       next(error);
@@ -92,7 +92,7 @@ const inventoryController = {
       if (error.message.includes('不存在')) {
         return errors.notFound(res, error.message);
       }
-      if (error.message.includes('只有')) {
+      if (error.message.includes('無法') || error.message.includes('只有')) {
         return errors.badRequest(res, error.message);
       }
       next(error);
@@ -138,7 +138,7 @@ const inventoryController = {
   },
 
   /**
-   * 結案盤點
+   * 關閉盤點（結案）
    * POST /api/v1/inventory/plans/:id/close
    */
   async closePlan(req, res, next) {
@@ -157,33 +157,20 @@ const inventoryController = {
   },
 
   /**
-   * 取得盤點進度
-   * GET /api/v1/inventory/plans/:id/progress
+   * 取得盤點計畫的資產清單
+   * GET /api/v1/inventory/plans/:id/assets
    */
-  async getProgress(req, res, next) {
+  async getPlanAssets(req, res, next) {
     try {
-      const progress = await inventoryService.getPlanProgress(req.params.id);
-      if (!progress) {
-        return errors.notFound(res, '盤點計畫不存在');
-      }
-      return success(res, progress);
-    } catch (error) {
-      next(error);
-    }
-  },
+      const { page = 1, pageSize = 50, status } = req.query;
 
-  /**
-   * 取得待盤資產清單
-   * GET /api/v1/inventory/plans/:id/pending-assets
-   */
-  async getPendingAssets(req, res, next) {
-    try {
-      const { page = 1, pageSize = 50 } = req.query;
-      const result = await inventoryService.getPendingAssets(req.params.id, {
+      const result = await inventoryService.getPlanAssets(req.params.id, {
         page: parseInt(page),
         pageSize: parseInt(pageSize),
+        status,
       });
-      return paginated(res, result.data, result.pagination);
+
+      return success(res, result);
     } catch (error) {
       if (error.message.includes('不存在')) {
         return errors.notFound(res, error.message);
@@ -193,17 +180,46 @@ const inventoryController = {
   },
 
   /**
-   * 取得盤點紀錄
+   * 掃描資產（盤點）
+   * POST /api/v1/inventory/plans/:id/scan
+   */
+  async scanAsset(req, res, next) {
+    try {
+      const validationErrors = validationResult(req);
+      if (!validationErrors.isEmpty()) {
+        return errors.validation(res, validationErrors.array());
+      }
+
+      const result = await inventoryService.scanAsset(req.params.id, req.body, req.user.id);
+      
+      const message = result.isUpdate ? '盤點記錄已更新' : '盤點成功';
+      return success(res, result, message);
+    } catch (error) {
+      if (error.message.includes('不存在')) {
+        return errors.notFound(res, error.message);
+      }
+      if (error.message.includes('不在進行中')) {
+        return errors.badRequest(res, error.message);
+      }
+      next(error);
+    }
+  },
+
+  /**
+   * 查詢盤點記錄
    * GET /api/v1/inventory/plans/:id/records
    */
   async getRecords(req, res, next) {
     try {
-      const { page = 1, pageSize = 50, matchStatus } = req.query;
-      const result = await inventoryService.getRecords(req.params.id, {
+      const { page = 1, pageSize = 50, matchStatus, search } = req.query;
+
+      const result = await inventoryService.findRecords(req.params.id, {
         page: parseInt(page),
         pageSize: parseInt(pageSize),
         matchStatus,
+        search,
       });
+
       return paginated(res, result.data, result.pagination);
     } catch (error) {
       next(error);
@@ -211,38 +227,34 @@ const inventoryController = {
   },
 
   /**
-   * OCR 辨識盤點
-   * POST /api/v1/inventory/ocr
+   * 取得盤點差異報表
+   * GET /api/v1/inventory/plans/:id/discrepancy-report
    */
-  async ocrScan(req, res, next) {
+  async getDiscrepancyReport(req, res, next) {
     try {
-      const validationErrors = validationResult(req);
-      if (!validationErrors.isEmpty()) {
-        return errors.validation(res, validationErrors.array());
-      }
-
-      const result = await ocrService.processOcr(req.body, req.user.id);
-      return success(res, result, result.message);
+      const report = await inventoryService.getDiscrepancyReport(req.params.id);
+      return success(res, report);
     } catch (error) {
+      if (error.message.includes('不存在')) {
+        return errors.notFound(res, error.message);
+      }
       next(error);
     }
   },
 
   /**
-   * 手動盤點
-   * POST /api/v1/inventory/manual-scan
+   * 更新盤點記錄
+   * PUT /api/v1/inventory/records/:id
    */
-  async manualScan(req, res, next) {
+  async updateRecord(req, res, next) {
     try {
-      const validationErrors = validationResult(req);
-      if (!validationErrors.isEmpty()) {
-        return errors.validation(res, validationErrors.array());
-      }
-
-      const result = await ocrService.manualScan(req.body, req.user.id);
-      return success(res, result, result.message);
+      const record = await inventoryService.updateRecord(req.params.id, req.body, req.user.id);
+      return success(res, record, '記錄已更新');
     } catch (error) {
-      if (error.message.includes('不存在') || error.message.includes('已盤點')) {
+      if (error.message.includes('不存在')) {
+        return errors.notFound(res, error.message);
+      }
+      if (error.message.includes('無法修改')) {
         return errors.badRequest(res, error.message);
       }
       next(error);
