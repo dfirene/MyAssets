@@ -1,0 +1,379 @@
+// 資訊資產管理系統 - 資料庫結構
+// Database: PostgreSQL
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ========== 系統管理 ==========
+
+// 使用者
+model User {
+  id            BigInt    @id @default(autoincrement())
+  account       String    @unique @db.VarChar(100)
+  password      String    @db.VarChar(255)
+  name          String    @db.VarChar(50)
+  email         String    @db.VarChar(100)
+  departmentId  BigInt?   @map("department_id")
+  status        String    @default("active") @db.VarChar(20) // active, inactive
+  lastLoginAt   DateTime? @map("last_login_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  department    Department?      @relation(fields: [departmentId], references: [id])
+  roles         UserRole[]
+  createdAssets Asset[]          @relation("AssetCreatedBy")
+  updatedAssets Asset[]          @relation("AssetUpdatedBy")
+  custodianOf   Asset[]          @relation("AssetCustodian")
+  inventoryRecords InventoryRecord[]
+  loginLogs     LoginLog[]
+  auditLogs     AuditLog[]
+
+  @@map("users")
+}
+
+// 角色
+model Role {
+  id          BigInt   @id @default(autoincrement())
+  code        String   @unique @db.VarChar(50)
+  name        String   @db.VarChar(50)
+  description String?  @db.VarChar(255)
+  isSystem    Boolean  @default(false) @map("is_system")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  users       UserRole[]
+  permissions RolePermission[]
+
+  @@map("roles")
+}
+
+// 使用者-角色關聯
+model UserRole {
+  id        BigInt   @id @default(autoincrement())
+  userId    BigInt   @map("user_id")
+  roleId    BigInt   @map("role_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@map("user_roles")
+}
+
+// 權限
+model Permission {
+  id          BigInt   @id @default(autoincrement())
+  module      String   @db.VarChar(50)
+  action      String   @db.VarChar(50)
+  name        String   @db.VarChar(100)
+  description String?  @db.VarChar(255)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  roles RolePermission[]
+
+  @@unique([module, action])
+  @@map("permissions")
+}
+
+// 角色-權限關聯
+model RolePermission {
+  id           BigInt   @id @default(autoincrement())
+  roleId       BigInt   @map("role_id")
+  permissionId BigInt   @map("permission_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+// 登入紀錄
+model LoginLog {
+  id        BigInt   @id @default(autoincrement())
+  userId    BigInt   @map("user_id")
+  ipAddress String?  @map("ip_address") @db.VarChar(50)
+  userAgent String?  @map("user_agent") @db.VarChar(500)
+  status    String   @db.VarChar(20) // success, failed
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("login_logs")
+}
+
+// ========== 基礎資料 ==========
+
+// 部門
+model Department {
+  id        BigInt   @id @default(autoincrement())
+  code      String   @unique @db.VarChar(50)
+  name      String   @db.VarChar(100)
+  parentId  BigInt?  @map("parent_id")
+  managerId BigInt?  @map("manager_id")
+  status    String   @default("active") @db.VarChar(20)
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  parent   Department?  @relation("DepartmentHierarchy", fields: [parentId], references: [id])
+  children Department[] @relation("DepartmentHierarchy")
+  users    User[]
+  assets   Asset[]
+
+  @@map("departments")
+}
+
+// 存放位置
+model Location {
+  id        BigInt   @id @default(autoincrement())
+  code      String   @unique @db.VarChar(50)
+  name      String   @db.VarChar(100)
+  parentId  BigInt?  @map("parent_id")
+  level     Int      @default(1) // 1:廠區/大樓, 2:樓層, 3:區域
+  status    String   @default("active") @db.VarChar(20)
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  parent   Location?  @relation("LocationHierarchy", fields: [parentId], references: [id])
+  children Location[] @relation("LocationHierarchy")
+  assets   Asset[]
+
+  @@map("locations")
+}
+
+// 資產分類
+model Category {
+  id            BigInt   @id @default(autoincrement())
+  code          String   @unique @db.VarChar(50)
+  name          String   @db.VarChar(100)
+  parentId      BigInt?  @map("parent_id")
+  level         Int      @default(1) // 1:大類, 2:小類
+  depreciationYears Int? @map("depreciation_years")
+  description   String?  @db.VarChar(255)
+  status        String   @default("active") @db.VarChar(20)
+  sortOrder     Int      @default(0) @map("sort_order")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  parent   Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children Category[] @relation("CategoryHierarchy")
+  assets   Asset[]
+
+  @@map("categories")
+}
+
+// 供應商
+model Supplier {
+  id           BigInt   @id @default(autoincrement())
+  code         String   @unique @db.VarChar(50)
+  name         String   @db.VarChar(100)
+  taxId        String?  @map("tax_id") @db.VarChar(20) // 統一編號
+  contactName  String?  @map("contact_name") @db.VarChar(50)
+  phone        String?  @db.VarChar(30)
+  email        String?  @db.VarChar(100)
+  address      String?  @db.VarChar(255)
+  serviceItems String?  @map("service_items") @db.VarChar(500)
+  status       String   @default("active") @db.VarChar(20)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  assets Asset[]
+
+  @@map("suppliers")
+}
+
+// 資產狀態代碼
+model AssetStatus {
+  id          BigInt   @id @default(autoincrement())
+  code        String   @unique @db.VarChar(50)
+  name        String   @db.VarChar(50)
+  description String?  @db.VarChar(255)
+  color       String?  @db.VarChar(20) // 顯示顏色
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("asset_statuses")
+}
+
+// ========== 資產管理 ==========
+
+// 資產主檔
+model Asset {
+  id            BigInt    @id @default(autoincrement())
+  assetNo       String    @unique @map("asset_no") @db.VarChar(20)
+  categoryId    BigInt    @map("category_id")
+  name          String    @db.VarChar(100)
+  specModel     String?   @map("spec_model") @db.VarChar(100)
+  serialNo      String?   @map("serial_no") @db.VarChar(50)
+  acquireDate   DateTime  @map("acquire_date") @db.Date
+  acquireAmount Decimal?  @map("acquire_amount") @db.Decimal(12, 2)
+  supplierId    BigInt?   @map("supplier_id")
+  purchaseNo    String?   @map("purchase_no") @db.VarChar(50)
+  departmentId  BigInt    @map("department_id")
+  custodianId   BigInt    @map("custodian_id")
+  locationId    BigInt?   @map("location_id")
+  status        String    @default("in_use") @db.VarChar(20)
+  warrantyDate  DateTime? @map("warranty_date") @db.Date
+  remark        String?   @db.Text
+  erpSyncTime   DateTime? @map("erp_sync_time")
+  createdBy     BigInt    @map("created_by")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedBy     BigInt    @map("updated_by")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  category    Category     @relation(fields: [categoryId], references: [id])
+  supplier    Supplier?    @relation(fields: [supplierId], references: [id])
+  department  Department   @relation(fields: [departmentId], references: [id])
+  custodian   User         @relation("AssetCustodian", fields: [custodianId], references: [id])
+  location    Location?    @relation(fields: [locationId], references: [id])
+  createdByUser User       @relation("AssetCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser User       @relation("AssetUpdatedBy", fields: [updatedBy], references: [id])
+  movements   AssetMovement[]
+  attachments AssetAttachment[]
+  inventoryRecords InventoryRecord[]
+
+  @@index([departmentId])
+  @@index([status])
+  @@index([categoryId])
+  @@map("assets")
+}
+
+// 資產異動紀錄
+model AssetMovement {
+  id            BigInt   @id @default(autoincrement())
+  assetId       BigInt   @map("asset_id")
+  movementType  String   @map("movement_type") @db.VarChar(20) // transfer, borrow, return, repair, scrap
+  fromDeptId    BigInt?  @map("from_dept_id")
+  toDeptId      BigInt?  @map("to_dept_id")
+  fromLocationId BigInt? @map("from_location_id")
+  toLocationId  BigInt?  @map("to_location_id")
+  fromCustodianId BigInt? @map("from_custodian_id")
+  toCustodianId BigInt?  @map("to_custodian_id")
+  reason        String?  @db.VarChar(500)
+  remark        String?  @db.Text
+  status        String   @default("pending") @db.VarChar(20) // pending, approved, rejected, completed
+  createdBy     BigInt   @map("created_by")
+  createdAt     DateTime @default(now()) @map("created_at")
+  approvedBy    BigInt?  @map("approved_by")
+  approvedAt    DateTime? @map("approved_at")
+
+  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@index([assetId])
+  @@map("asset_movements")
+}
+
+// 資產附件
+model AssetAttachment {
+  id          BigInt   @id @default(autoincrement())
+  assetId     BigInt   @map("asset_id")
+  fileName    String   @map("file_name") @db.VarChar(255)
+  filePath    String   @map("file_path") @db.VarChar(500)
+  fileSize    Int      @map("file_size")
+  mimeType    String   @map("mime_type") @db.VarChar(100)
+  description String?  @db.VarChar(255)
+  createdBy   BigInt   @map("created_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@map("asset_attachments")
+}
+
+// ========== 盤點管理 ==========
+
+// 盤點計畫
+model InventoryPlan {
+  id          BigInt   @id @default(autoincrement())
+  name        String   @db.VarChar(100)
+  description String?  @db.VarChar(500)
+  startDate   DateTime @map("start_date") @db.Date
+  endDate     DateTime @map("end_date") @db.Date
+  status      String   @default("draft") @db.VarChar(20) // draft, in_progress, completed, closed
+  scopeType   String   @map("scope_type") @db.VarChar(20) // all, department, location, category
+  scopeIds    String?  @map("scope_ids") @db.VarChar(500) // JSON array of IDs
+  createdBy   BigInt   @map("created_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  records InventoryRecord[]
+
+  @@map("inventory_plans")
+}
+
+// 盤點紀錄
+model InventoryRecord {
+  id             BigInt   @id @default(autoincrement())
+  planId         BigInt   @map("plan_id")
+  assetNo        String   @map("asset_no") @db.VarChar(20)
+  ocrRawText     String?  @map("ocr_raw_text") @db.Text
+  ocrCategory    String?  @map("ocr_category") @db.VarChar(100)
+  ocrName        String?  @map("ocr_name") @db.VarChar(100)
+  ocrDate        String?  @map("ocr_date") @db.VarChar(20)
+  imagePath      String?  @map("image_path") @db.VarChar(500)
+  matchStatus    String   @map("match_status") @db.VarChar(20) // matched, unmatched, discrepancy
+  matchAssetId   BigInt?  @map("match_asset_id")
+  discrepancyNote String? @map("discrepancy_note") @db.Text
+  scannedBy      BigInt   @map("scanned_by")
+  scannedAt      DateTime @map("scanned_at")
+  gpsLatitude    Decimal? @map("gps_latitude") @db.Decimal(10, 8)
+  gpsLongitude   Decimal? @map("gps_longitude") @db.Decimal(11, 8)
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  plan     InventoryPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  asset    Asset?        @relation(fields: [matchAssetId], references: [id])
+  scannedByUser User     @relation(fields: [scannedBy], references: [id])
+
+  @@index([planId])
+  @@index([assetNo])
+  @@map("inventory_records")
+}
+
+// ========== 系統 ==========
+
+// 稽核日誌
+model AuditLog {
+  id         BigInt   @id @default(autoincrement())
+  userId     BigInt?  @map("user_id")
+  action     String   @db.VarChar(50)
+  tableName  String   @map("table_name") @db.VarChar(50)
+  recordId   BigInt?  @map("record_id")
+  oldValue   String?  @map("old_value") @db.Text
+  newValue   String?  @map("new_value") @db.Text
+  ipAddress  String?  @map("ip_address") @db.VarChar(50)
+  userAgent  String?  @map("user_agent") @db.VarChar(500)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([tableName, recordId])
+  @@map("audit_logs")
+}
+
+// ERP 同步紀錄
+model ErpSyncLog {
+  id          BigInt   @id @default(autoincrement())
+  syncType    String   @map("sync_type") @db.VarChar(20) // full, incremental
+  status      String   @db.VarChar(20) // running, success, failed
+  totalCount  Int      @default(0) @map("total_count")
+  addedCount  Int      @default(0) @map("added_count")
+  updatedCount Int     @default(0) @map("updated_count")
+  errorCount  Int      @default(0) @map("error_count")
+  errorLog    String?  @map("error_log") @db.Text
+  startedAt   DateTime @map("started_at")
+  finishedAt  DateTime? @map("finished_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("erp_sync_logs")
+}
