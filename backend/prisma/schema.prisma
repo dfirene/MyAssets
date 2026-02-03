@@ -1,12 +1,12 @@
 // 資訊資產管理系統 - 資料庫結構
-// Database: PostgreSQL
+// Database: SQLite
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -14,13 +14,13 @@ datasource db {
 
 // 使用者
 model User {
-  id            BigInt    @id @default(autoincrement())
-  account       String    @unique @db.VarChar(100)
-  password      String    @db.VarChar(255)
-  name          String    @db.VarChar(50)
-  email         String    @db.VarChar(100)
-  departmentId  BigInt?   @map("department_id")
-  status        String    @default("active") @db.VarChar(20) // active, inactive
+  id            Int    @id @default(autoincrement())
+  account       String    @unique
+  password      String   
+  name          String   
+  email         String   
+  departmentId  Int?   @map("department_id")
+  status        String    @default("active") // active, inactive
   lastLoginAt   DateTime? @map("last_login_at")
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
@@ -39,10 +39,10 @@ model User {
 
 // 角色
 model Role {
-  id          BigInt   @id @default(autoincrement())
-  code        String   @unique @db.VarChar(50)
-  name        String   @db.VarChar(50)
-  description String?  @db.VarChar(255)
+  id          Int   @id @default(autoincrement())
+  code        String   @unique
+  name        String  
+  description String? 
   isSystem    Boolean  @default(false) @map("is_system")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
@@ -55,9 +55,9 @@ model Role {
 
 // 使用者-角色關聯
 model UserRole {
-  id        BigInt   @id @default(autoincrement())
-  userId    BigInt   @map("user_id")
-  roleId    BigInt   @map("role_id")
+  id        Int   @id @default(autoincrement())
+  userId    Int   @map("user_id")
+  roleId    Int   @map("role_id")
   createdAt DateTime @default(now()) @map("created_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -69,11 +69,11 @@ model UserRole {
 
 // 權限
 model Permission {
-  id          BigInt   @id @default(autoincrement())
-  module      String   @db.VarChar(50)
-  action      String   @db.VarChar(50)
-  name        String   @db.VarChar(100)
-  description String?  @db.VarChar(255)
+  id          Int   @id @default(autoincrement())
+  module      String  
+  action      String  
+  name        String  
+  description String? 
   createdAt   DateTime @default(now()) @map("created_at")
 
   roles RolePermission[]
@@ -84,9 +84,9 @@ model Permission {
 
 // 角色-權限關聯
 model RolePermission {
-  id           BigInt   @id @default(autoincrement())
-  roleId       BigInt   @map("role_id")
-  permissionId BigInt   @map("permission_id")
+  id           Int   @id @default(autoincrement())
+  roleId       Int   @map("role_id")
+  permissionId Int   @map("permission_id")
   createdAt    DateTime @default(now()) @map("created_at")
 
   role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
@@ -98,11 +98,11 @@ model RolePermission {
 
 // 登入紀錄
 model LoginLog {
-  id        BigInt   @id @default(autoincrement())
-  userId    BigInt   @map("user_id")
-  ipAddress String?  @map("ip_address") @db.VarChar(50)
-  userAgent String?  @map("user_agent") @db.VarChar(500)
-  status    String   @db.VarChar(20) // success, failed
+  id        Int   @id @default(autoincrement())
+  userId    Int   @map("user_id")
+  ipAddress String?  @map("ip_address")
+  userAgent String?  @map("user_agent")
+  status    String   // success, failed
   createdAt DateTime @default(now()) @map("created_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -114,12 +114,12 @@ model LoginLog {
 
 // 部門
 model Department {
-  id        BigInt   @id @default(autoincrement())
-  code      String   @unique @db.VarChar(50)
-  name      String   @db.VarChar(100)
-  parentId  BigInt?  @map("parent_id")
-  managerId BigInt?  @map("manager_id")
-  status    String   @default("active") @db.VarChar(20)
+  id        Int   @id @default(autoincrement())
+  code      String   @unique
+  name      String  
+  parentId  Int?  @map("parent_id")
+  managerId Int?  @map("manager_id")
+  status    String   @default("active")
   sortOrder Int      @default(0) @map("sort_order")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -134,12 +134,12 @@ model Department {
 
 // 存放位置
 model Location {
-  id        BigInt   @id @default(autoincrement())
-  code      String   @unique @db.VarChar(50)
-  name      String   @db.VarChar(100)
-  parentId  BigInt?  @map("parent_id")
+  id        Int   @id @default(autoincrement())
+  code      String   @unique
+  name      String  
+  parentId  Int?  @map("parent_id")
   level     Int      @default(1) // 1:廠區/大樓, 2:樓層, 3:區域
-  status    String   @default("active") @db.VarChar(20)
+  status    String   @default("active")
   sortOrder Int      @default(0) @map("sort_order")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -153,14 +153,14 @@ model Location {
 
 // 資產分類
 model Category {
-  id            BigInt   @id @default(autoincrement())
-  code          String   @unique @db.VarChar(50)
-  name          String   @db.VarChar(100)
-  parentId      BigInt?  @map("parent_id")
+  id            Int   @id @default(autoincrement())
+  code          String   @unique
+  name          String  
+  parentId      Int?  @map("parent_id")
   level         Int      @default(1) // 1:大類, 2:小類
   depreciationYears Int? @map("depreciation_years")
-  description   String?  @db.VarChar(255)
-  status        String   @default("active") @db.VarChar(20)
+  description   String? 
+  status        String   @default("active")
   sortOrder     Int      @default(0) @map("sort_order")
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
@@ -174,16 +174,16 @@ model Category {
 
 // 供應商
 model Supplier {
-  id           BigInt   @id @default(autoincrement())
-  code         String   @unique @db.VarChar(50)
-  name         String   @db.VarChar(100)
-  taxId        String?  @map("tax_id") @db.VarChar(20) // 統一編號
-  contactName  String?  @map("contact_name") @db.VarChar(50)
-  phone        String?  @db.VarChar(30)
-  email        String?  @db.VarChar(100)
-  address      String?  @db.VarChar(255)
-  serviceItems String?  @map("service_items") @db.VarChar(500)
-  status       String   @default("active") @db.VarChar(20)
+  id           Int   @id @default(autoincrement())
+  code         String   @unique
+  name         String  
+  taxId        String?  @map("tax_id") // 統一編號
+  contactName  String?  @map("contact_name")
+  phone        String? 
+  email        String? 
+  address      String? 
+  serviceItems String?  @map("service_items")
+  status       String   @default("active")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
@@ -194,11 +194,11 @@ model Supplier {
 
 // 資產狀態代碼
 model AssetStatus {
-  id          BigInt   @id @default(autoincrement())
-  code        String   @unique @db.VarChar(50)
-  name        String   @db.VarChar(50)
-  description String?  @db.VarChar(255)
-  color       String?  @db.VarChar(20) // 顯示顏色
+  id          Int   @id @default(autoincrement())
+  code        String   @unique
+  name        String  
+  description String? 
+  color       String?  // 顯示顏色
   sortOrder   Int      @default(0) @map("sort_order")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
@@ -210,26 +210,26 @@ model AssetStatus {
 
 // 資產主檔
 model Asset {
-  id            BigInt    @id @default(autoincrement())
-  assetNo       String    @unique @map("asset_no") @db.VarChar(20)
-  categoryId    BigInt    @map("category_id")
-  name          String    @db.VarChar(100)
-  specModel     String?   @map("spec_model") @db.VarChar(100)
-  serialNo      String?   @map("serial_no") @db.VarChar(50)
-  acquireDate   DateTime  @map("acquire_date") @db.Date
-  acquireAmount Decimal?  @map("acquire_amount") @db.Decimal(12, 2)
-  supplierId    BigInt?   @map("supplier_id")
-  purchaseNo    String?   @map("purchase_no") @db.VarChar(50)
-  departmentId  BigInt    @map("department_id")
-  custodianId   BigInt    @map("custodian_id")
-  locationId    BigInt?   @map("location_id")
-  status        String    @default("in_use") @db.VarChar(20)
-  warrantyDate  DateTime? @map("warranty_date") @db.Date
-  remark        String?   @db.Text
+  id            Int    @id @default(autoincrement())
+  assetNo       String    @unique @map("asset_no")
+  categoryId    Int    @map("category_id")
+  name          String   
+  specModel     String?   @map("spec_model")
+  serialNo      String?   @map("serial_no")
+  acquireDate   DateTime  @map("acquire_date")
+  acquireAmount Float?  @map("acquire_amount")
+  supplierId    Int?   @map("supplier_id")
+  purchaseNo    String?   @map("purchase_no")
+  departmentId  Int    @map("department_id")
+  custodianId   Int    @map("custodian_id")
+  locationId    Int?   @map("location_id")
+  status        String    @default("in_use")
+  warrantyDate  DateTime? @map("warranty_date")
+  remark        String?  
   erpSyncTime   DateTime? @map("erp_sync_time")
-  createdBy     BigInt    @map("created_by")
+  createdBy     Int    @map("created_by")
   createdAt     DateTime  @default(now()) @map("created_at")
-  updatedBy     BigInt    @map("updated_by")
+  updatedBy     Int    @map("updated_by")
   updatedAt     DateTime  @updatedAt @map("updated_at")
 
   category    Category     @relation(fields: [categoryId], references: [id])
@@ -251,21 +251,21 @@ model Asset {
 
 // 資產異動紀錄
 model AssetMovement {
-  id            BigInt   @id @default(autoincrement())
-  assetId       BigInt   @map("asset_id")
-  movementType  String   @map("movement_type") @db.VarChar(20) // transfer, borrow, return, repair, scrap
-  fromDeptId    BigInt?  @map("from_dept_id")
-  toDeptId      BigInt?  @map("to_dept_id")
-  fromLocationId BigInt? @map("from_location_id")
-  toLocationId  BigInt?  @map("to_location_id")
-  fromCustodianId BigInt? @map("from_custodian_id")
-  toCustodianId BigInt?  @map("to_custodian_id")
-  reason        String?  @db.VarChar(500)
-  remark        String?  @db.Text
-  status        String   @default("pending") @db.VarChar(20) // pending, approved, rejected, completed
-  createdBy     BigInt   @map("created_by")
+  id            Int   @id @default(autoincrement())
+  assetId       Int   @map("asset_id")
+  movementType  String   @map("movement_type") // transfer, borrow, return, repair, scrap
+  fromDeptId    Int?  @map("from_dept_id")
+  toDeptId      Int?  @map("to_dept_id")
+  fromLocationId Int? @map("from_location_id")
+  toLocationId  Int?  @map("to_location_id")
+  fromCustodianId Int? @map("from_custodian_id")
+  toCustodianId Int?  @map("to_custodian_id")
+  reason        String? 
+  remark        String? 
+  status        String   @default("pending") // pending, approved, rejected, completed
+  createdBy     Int   @map("created_by")
   createdAt     DateTime @default(now()) @map("created_at")
-  approvedBy    BigInt?  @map("approved_by")
+  approvedBy    Int?  @map("approved_by")
   approvedAt    DateTime? @map("approved_at")
 
   asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
@@ -276,14 +276,14 @@ model AssetMovement {
 
 // 資產附件
 model AssetAttachment {
-  id          BigInt   @id @default(autoincrement())
-  assetId     BigInt   @map("asset_id")
-  fileName    String   @map("file_name") @db.VarChar(255)
-  filePath    String   @map("file_path") @db.VarChar(500)
+  id          Int   @id @default(autoincrement())
+  assetId     Int   @map("asset_id")
+  fileName    String   @map("file_name")
+  filePath    String   @map("file_path")
   fileSize    Int      @map("file_size")
-  mimeType    String   @map("mime_type") @db.VarChar(100)
-  description String?  @db.VarChar(255)
-  createdBy   BigInt   @map("created_by")
+  mimeType    String   @map("mime_type")
+  description String? 
+  createdBy   Int   @map("created_by")
   createdAt   DateTime @default(now()) @map("created_at")
 
   asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
@@ -295,15 +295,15 @@ model AssetAttachment {
 
 // 盤點計畫
 model InventoryPlan {
-  id          BigInt   @id @default(autoincrement())
-  name        String   @db.VarChar(100)
-  description String?  @db.VarChar(500)
-  startDate   DateTime @map("start_date") @db.Date
-  endDate     DateTime @map("end_date") @db.Date
-  status      String   @default("draft") @db.VarChar(20) // draft, in_progress, completed, closed
-  scopeType   String   @map("scope_type") @db.VarChar(20) // all, department, location, category
-  scopeIds    String?  @map("scope_ids") @db.VarChar(500) // JSON array of IDs
-  createdBy   BigInt   @map("created_by")
+  id          Int   @id @default(autoincrement())
+  name        String  
+  description String? 
+  startDate   DateTime @map("start_date")
+  endDate     DateTime @map("end_date")
+  status      String   @default("draft") // draft, in_progress, completed, closed
+  scopeType   String   @map("scope_type") // all, department, location, category
+  scopeIds    String?  @map("scope_ids") // JSON array of IDs
+  createdBy   Int   @map("created_by")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
@@ -314,21 +314,21 @@ model InventoryPlan {
 
 // 盤點紀錄
 model InventoryRecord {
-  id             BigInt   @id @default(autoincrement())
-  planId         BigInt   @map("plan_id")
-  assetNo        String   @map("asset_no") @db.VarChar(20)
-  ocrRawText     String?  @map("ocr_raw_text") @db.Text
-  ocrCategory    String?  @map("ocr_category") @db.VarChar(100)
-  ocrName        String?  @map("ocr_name") @db.VarChar(100)
-  ocrDate        String?  @map("ocr_date") @db.VarChar(20)
-  imagePath      String?  @map("image_path") @db.VarChar(500)
-  matchStatus    String   @map("match_status") @db.VarChar(20) // matched, unmatched, discrepancy
-  matchAssetId   BigInt?  @map("match_asset_id")
-  discrepancyNote String? @map("discrepancy_note") @db.Text
-  scannedBy      BigInt   @map("scanned_by")
+  id             Int   @id @default(autoincrement())
+  planId         Int   @map("plan_id")
+  assetNo        String   @map("asset_no")
+  ocrRawText     String?  @map("ocr_raw_text")
+  ocrCategory    String?  @map("ocr_category")
+  ocrName        String?  @map("ocr_name")
+  ocrDate        String?  @map("ocr_date")
+  imagePath      String?  @map("image_path")
+  matchStatus    String   @map("match_status") // matched, unmatched, discrepancy
+  matchAssetId   Int?  @map("match_asset_id")
+  discrepancyNote String? @map("discrepancy_note")
+  scannedBy      Int   @map("scanned_by")
   scannedAt      DateTime @map("scanned_at")
-  gpsLatitude    Decimal? @map("gps_latitude") @db.Decimal(10, 8)
-  gpsLongitude   Decimal? @map("gps_longitude") @db.Decimal(11, 8)
+  gpsLatitude    Float? @map("gps_latitude")
+  gpsLongitude   Float? @map("gps_longitude")
   createdAt      DateTime @default(now()) @map("created_at")
 
   plan     InventoryPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
@@ -344,15 +344,15 @@ model InventoryRecord {
 
 // 稽核日誌
 model AuditLog {
-  id         BigInt   @id @default(autoincrement())
-  userId     BigInt?  @map("user_id")
-  action     String   @db.VarChar(50)
-  tableName  String   @map("table_name") @db.VarChar(50)
-  recordId   BigInt?  @map("record_id")
-  oldValue   String?  @map("old_value") @db.Text
-  newValue   String?  @map("new_value") @db.Text
-  ipAddress  String?  @map("ip_address") @db.VarChar(50)
-  userAgent  String?  @map("user_agent") @db.VarChar(500)
+  id         Int   @id @default(autoincrement())
+  userId     Int?  @map("user_id")
+  action     String  
+  tableName  String   @map("table_name")
+  recordId   Int?  @map("record_id")
+  oldValue   String?  @map("old_value")
+  newValue   String?  @map("new_value")
+  ipAddress  String?  @map("ip_address")
+  userAgent  String?  @map("user_agent")
   createdAt  DateTime @default(now()) @map("created_at")
 
   user User? @relation(fields: [userId], references: [id])
@@ -363,14 +363,14 @@ model AuditLog {
 
 // ERP 同步紀錄
 model ErpSyncLog {
-  id          BigInt   @id @default(autoincrement())
-  syncType    String   @map("sync_type") @db.VarChar(20) // full, incremental
-  status      String   @db.VarChar(20) // running, success, failed
+  id          Int   @id @default(autoincrement())
+  syncType    String   @map("sync_type") // full, incremental
+  status      String   // running, success, failed
   totalCount  Int      @default(0) @map("total_count")
   addedCount  Int      @default(0) @map("added_count")
   updatedCount Int     @default(0) @map("updated_count")
   errorCount  Int      @default(0) @map("error_count")
-  errorLog    String?  @map("error_log") @db.Text
+  errorLog    String?  @map("error_log")
   startedAt   DateTime @map("started_at")
   finishedAt  DateTime? @map("finished_at")
   createdAt   DateTime @default(now()) @map("created_at")
